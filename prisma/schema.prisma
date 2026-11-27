@@ -1,0 +1,373 @@
+// This is your Prisma schema file for Project Mate
+// Learn more: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// USERS & AUTHENTICATION
+// ============================================================================
+
+enum UserRole {
+  student
+  tutor
+  admin
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String
+  password  String
+  role      UserRole @default(student)
+  
+  // Profile
+  university    String?
+  major         String?
+  year          Int?
+  bio           String?
+  avatar        String?
+  phone         String?
+  verified      Boolean @default(false)
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  tutorListings        TutorListing[]
+  helpRequests         HelpRequest[]
+  connectionsAsStudent Connection[] @relation("StudentConnections")
+  connectionsAsTutor   Connection[] @relation("TutorConnections")
+  sentMessages         Message[]
+  sentReviews          Review[]     @relation("ReviewGiver")
+  receivedReviews      Review[]     @relation("ReviewReceiver")
+  reports              Report[]
+
+  @@index([email])
+  @@index([role])
+  @@map("users")
+}
+
+// ============================================================================
+// OTP CODES  (email verification + password reset)
+// ============================================================================
+
+enum OtpType {
+  email_verification
+  password_reset
+}
+
+model OtpCode {
+  id        String   @id @default(cuid())
+  email     String
+  code      String   // 6-digit hashed OTP
+  type      OtpType
+  expiresAt DateTime
+  usedAt    DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([email, type])
+  @@map("otp_codes")
+}
+
+// ============================================================================
+// SUBJECTS
+// ============================================================================
+
+model Subject {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  category    String   // e.g., "Computer Science", "Mathematics", "Physics"
+  description String?
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  tutorListings TutorListing[]
+  helpRequests  HelpRequest[]
+  
+  @@index([category])
+  @@map("subjects")
+}
+
+// ============================================================================
+// TUTOR LISTINGS
+// ============================================================================
+
+enum TutorListingStatus {
+  active
+  inactive
+  paused
+}
+
+model TutorListing {
+  id          String              @id @default(cuid())
+  tutorId     String
+  subjectId   String
+  
+  title       String
+  description String
+  courseCode  String?
+  ratePerHour Decimal             @db.Decimal(10, 2)
+  availability String?            // JSON string or text describing availability
+  format      String              @default("online") // "online", "in-person", "both"
+  status      TutorListingStatus  @default(active)
+  
+  // Stats
+  totalSessions   Int @default(0)
+  totalEarnings   Decimal @default(0) @db.Decimal(10, 2)
+  averageRating   Decimal @default(0) @db.Decimal(3, 2)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  tutor   User    @relation(fields: [tutorId], references: [id], onDelete: Cascade)
+  subject Subject @relation(fields: [subjectId], references: [id])
+  
+  @@index([tutorId])
+  @@index([subjectId])
+  @@index([status])
+  @@map("tutor_listings")
+}
+
+// ============================================================================
+// HELP REQUESTS
+// ============================================================================
+
+enum HelpRequestUrgency {
+  low
+  medium
+  high
+}
+
+enum HelpRequestStatus {
+  open
+  in_progress
+  completed
+  cancelled
+}
+
+model HelpRequest {
+  id          String               @id @default(cuid())
+  studentId   String
+  subjectId   String
+  
+  title       String
+  description String
+  courseCode  String
+  budget      Decimal              @db.Decimal(10, 2)
+  urgency     HelpRequestUrgency   @default(medium)
+  status      HelpRequestStatus    @default(open)
+  
+  // Stats
+  proposalsCount Int @default(0)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  student User    @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  subject Subject @relation(fields: [subjectId], references: [id])
+  
+  @@index([studentId])
+  @@index([subjectId])
+  @@index([status])
+  @@map("help_requests")
+}
+
+// ============================================================================
+// CONNECTIONS & MESSAGING
+// ============================================================================
+
+enum ConnectionStatus {
+  pending_negotiation
+  active
+  completed
+  cancelled
+}
+
+model Connection {
+  id          String           @id @default(cuid())
+  studentId   String
+  tutorId     String
+  
+  status          ConnectionStatus @default(pending_negotiation)
+  initiatedBy     String
+  subject         String?
+  requestId       String?
+  proposedRate    Decimal?        @db.Decimal(10, 2)
+  proposalMessage String?
+  agreedRate      Decimal?        @db.Decimal(10, 2)
+  
+  sessionsCompleted Int     @default(0)
+  nextSessionAt     DateTime?
+  
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  completedAt DateTime?
+  
+  student  User      @relation("StudentConnections", fields: [studentId], references: [id], onDelete: Cascade)
+  tutor    User      @relation("TutorConnections", fields: [tutorId], references: [id], onDelete: Cascade)
+  messages Message[]
+  sessions Session[]
+  
+  @@index([studentId])
+  @@index([tutorId])
+  @@index([status])
+  @@map("connections")
+}
+
+// ============================================================================
+// MESSAGES
+// ============================================================================
+
+enum MessageType {
+  text
+  image
+  file
+  system
+}
+
+model Message {
+  id           String      @id @default(cuid())
+  connectionId String
+  senderId     String
+  
+  messageText    String
+  messageType    MessageType @default(text)
+  attachmentUrl  String?
+  
+  // Read Status
+  isRead Boolean   @default(false)
+  readAt DateTime?
+  
+  createdAt DateTime @default(now())
+  
+  // Relations
+  connection Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  sender     User       @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  
+  @@index([connectionId, createdAt])
+  @@index([senderId])
+  @@map("messages")
+}
+
+// ============================================================================
+// SESSIONS
+// ============================================================================
+
+enum SessionStatus {
+  scheduled
+  completed
+  cancelled
+}
+
+model Session {
+  id           String        @id @default(cuid())
+  connectionId String
+  
+  // Session Details
+  scheduledAt     DateTime
+  durationMinutes Int
+  sessionRate     Decimal @db.Decimal(10, 2)
+  totalAmount     Decimal @db.Decimal(10, 2)
+  
+  // Status
+  status      SessionStatus @default(scheduled)
+  completedAt DateTime?
+  
+  // Payment
+  paid   Boolean   @default(false)
+  paidAt DateTime?
+  
+  // Reviews
+  studentReviewId String?
+  tutorReviewId   String?
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  connection Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  
+  @@index([connectionId])
+  @@index([scheduledAt])
+  @@map("sessions")
+}
+
+// ============================================================================
+// REVIEWS
+// ============================================================================
+
+model Review {
+  id         String @id @default(cuid())
+  giverId    String
+  receiverId String
+  
+  rating     Int    // 1-5
+  comment    String?
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  giver    User @relation("ReviewGiver", fields: [giverId], references: [id], onDelete: Cascade)
+  receiver User @relation("ReviewReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
+  
+  @@index([receiverId])
+  @@map("reviews")
+}
+
+// ============================================================================
+// REPORTS (For Admin)
+// ============================================================================
+
+enum ReportType {
+  user
+  connection
+  content
+  other
+}
+
+enum ReportStatus {
+  pending
+  investigating
+  resolved
+  dismissed
+}
+
+model Report {
+  id          String       @id @default(cuid())
+  reporterId  String
+  reportType  ReportType
+  
+  targetId    String       // ID of reported entity (user, connection, etc.)
+  reason      String
+  description String?
+  status      ReportStatus @default(pending)
+  
+  // Admin Response
+  adminNotes     String?
+  resolvedAt     DateTime?
+  resolvedBy     String?
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  reporter User @relation(fields: [reporterId], references: [id], onDelete: Cascade)
+  
+  @@index([reporterId])
+  @@index([status])
+  @@map("reports")
+}
